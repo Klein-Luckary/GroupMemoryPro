@@ -18,7 +18,7 @@ from pkg.plugin.events import (
 class RelationManager(BasePlugin):
     def __init__(self, host: APIHost):
         super().__init__(host)
-        self.data_path = Path("plugins/GroupMemoryMini/data/relation_data.json")
+        self.data_path = Path("plugins/GroupMemoryPro/data/relation_data.json")
         self.relation_data = {}
         # 更新正则表达式以匹配各个维度的评分调整
         self.pattern = re.compile(
