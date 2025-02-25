@@ -27,7 +27,7 @@ class RelationManager(BasePlugin):
         )
         
         # 默认管理员列表
-        self.admin_users = ["123456789"]  # 替换为实际的管理员用户ID
+        self.admin_users = ["3224478440"]  # 替换为实际的管理员用户ID
 
         # 多维情感模型权重
         self.dimension_weights = {
@@ -72,12 +72,12 @@ class RelationManager(BasePlugin):
     def get_relation(self, user_id: str) -> dict:
         """获取或初始化用户关系数据"""
         return self.relation_data.setdefault(user_id, {
-            "evaluation": 50,  # 综合评分
-            "trust": 50,       # 信任度
-            "favor": 50,       # 好感度
+            "evaluation": 30,  # 综合评分
+            "trust": 25,       # 信任度
+            "favor": 25,       # 好感度
             "reciprocity": 0,  # 互惠性
-            "intimacy": 50,    # 亲密度
-            "emotional_support": 50,  # 情绪支持
+            "intimacy": 25,    # 亲密度
+            "emotional_support": 25,  # 情绪支持
             "history": [],
             "last_interaction": datetime.now().isoformat(),
             "custom_note": "",
@@ -142,7 +142,7 @@ class RelationManager(BasePlugin):
         # 动态修改默认提示
         if hasattr(ctx.event, 'alter'):
             relation_prompt = (
-                f"[用户关系档案]\n"
+                f"[当前用户关系档案]\n"
                 f"用户ID: {user_id}\n"
                 f"综合评分: {self.calculate_evaluation(relation):.1f}/100\n"
                 f"信任度: {relation['trust']:.1f}\n"
@@ -152,6 +152,7 @@ class RelationManager(BasePlugin):
                 f"情绪支持: {relation['emotional_support']:.1f}\n"
                 f"历史互动: {relation['interaction_count']}次\n"
                 f"最后活跃: {relation['last_interaction'][:19]}"
+                f"特别备注: {relation['custom_note'] or '暂无'}"
             )
             ctx.event.alter = f"{relation_prompt}\n\n{ctx.event.alter or ctx.event.text_message}"
 
