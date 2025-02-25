@@ -12,7 +12,7 @@ from pkg.plugin.events import (
 @register(
     name="GroupMemoryPro",
     description="基于多维情感模型的伪记忆系统",
-    version="0.2",  # 更新版本号
+    version="0.3",  # 更新版本号
     author="KL"
 )
 class RelationManager(BasePlugin):
@@ -20,14 +20,15 @@ class RelationManager(BasePlugin):
         super().__init__(host)
         self.data_path = Path("plugins/GroupMemoryPro/data/relation_data.json")
         self.relation_data = {}
-        # 更新正则表达式以匹配各个维度的评分调整
+        
+        # 正则表达式优化：匹配括号内的多维度调整指令
         self.pattern = re.compile(
-            r"(评价值\s*([+-]?\d+)|评价值\s*[：:]\s*([+-]?\d+)|评分\s*([+-]?\d+)|)"
-            r"(信任度|好感度|互惠性|亲密度|情绪支持)[：:]\s*([+-]?\d+)"
+            r"\(([^)]+)\)",  # 匹配括号内全部内容
+            re.UNICODE
         )
         
         # 默认管理员列表
-        self.admin_users = ["3224478440"]  # 替换为实际的管理员用户ID
+        self.admin_users = ["123456789"]  # 替换为实际的管理员用户ID
 
         # 多维情感模型权重
         self.dimension_weights = {
@@ -72,12 +73,12 @@ class RelationManager(BasePlugin):
     def get_relation(self, user_id: str) -> dict:
         """获取或初始化用户关系数据"""
         return self.relation_data.setdefault(user_id, {
-            "evaluation": 30,  # 综合评分
-            "trust": 25,       # 信任度
-            "favor": 25,       # 好感度
-            "reciprocity": 0,  # 互惠性
-            "intimacy": 25,    # 亲密度
-            "emotional_support": 25,  # 情绪支持
+            "evaluation": 25,  # 综合评分，调整为较低初始值
+            "trust": 25,       # 信任度，调整为较低初始值
+            "favor": 25,       # 好感度，调整为较低初始值
+            "reciprocity": 0,  # 互惠性，保持为0
+            "intimacy": 25,    # 亲密度，调整为较低初始值
+            "emotional_support": 25,  # 情绪支持，调整为较低初始值
             "history": [],
             "last_interaction": datetime.now().isoformat(),
             "custom_note": "",
@@ -94,6 +95,32 @@ class RelationManager(BasePlugin):
     def is_admin(self, user_id: str) -> bool:
         """检查用户是否为管理员"""
         return user_id in self.admin_users
+
+    def parse_dimension_adjustments(self, text: str) -> dict:
+        """解析维度调整文本"""
+        adjustments = {}
+        
+        # 分割多个调整项
+        items = re.split(r",\s*", text)
+        for item in items:
+            # 匹配单个维度调整
+            match = re.match(
+                r"^\s*(信任度|好感度|互惠性|亲密度|情绪支持)"  # 维度名
+                r"[：:]?\s*"  # 可选分隔符
+                r"([+-]?\d+\.?\d*)"  # 数值（支持小数和整数）
+                r"\s*$", 
+                item
+            )
+            
+            if match:
+                dimension = match.group(1)
+                try:
+                    value = float(match.group(2))
+                    adjustments[dimension] = value
+                except ValueError:
+                    self.ap.logger.warning(f"无效数值格式: {match.group(2)}")
+        
+        return adjustments
 
     @handler(PersonNormalMessageReceived)
     @handler(GroupNormalMessageReceived)
@@ -142,7 +169,7 @@ class RelationManager(BasePlugin):
         # 动态修改默认提示
         if hasattr(ctx.event, 'alter'):
             relation_prompt = (
-                f"[当前用户关系档案]\n"
+                f"[用户关系档案]\n"
                 f"用户ID: {user_id}\n"
                 f"综合评分: {self.calculate_evaluation(relation):.1f}/100\n"
                 f"信任度: {relation['trust']:.1f}\n"
@@ -151,7 +178,7 @@ class RelationManager(BasePlugin):
                 f"亲密度: {relation['intimacy']:.1f}\n"
                 f"情绪支持: {relation['emotional_support']:.1f}\n"
                 f"历史互动: {relation['interaction_count']}次\n"
-                f"最后活跃: {relation['last_interaction'][:19]}"
+                f"最后活跃: {relation['last_interaction'][:19]}\n"
                 f"特别备注: {relation['custom_note'] or '暂无'}"
             )
             ctx.event.alter = f"{relation_prompt}\n\n{ctx.event.alter or ctx.event.text_message}"
@@ -226,23 +253,31 @@ class RelationManager(BasePlugin):
         try:
             parts = ctx.event.text_message.split()
             target_user = parts[1]
-            dimension = parts[2]
-            value = float(parts[3])
             
-            if not target_user or dimension not in self.dimension_weights:
+            # 从消息中提取维度和相应的值
+            match = self.pattern.search(ctx.event.text_message)
+            
+            if not target_user or not match:
                 raise ValueError("参数错误")
             
             relation = self.get_relation(target_user)
-            old_value = relation.get(dimension, 0)
-            relation[dimension] = max(0, min(100, old_value + value))
-            relation["history"].append({
-                "timestamp": datetime.now().isoformat(),
-                "adjustment": value,
-                "reason": f"管理员调整 {dimension}"
-            })
+
+            for dimension in ["信任度", "好感度", "互惠性", "亲密度", "情绪支持"]:
+                dimension_value_match = re.search(rf"{dimension}[：:]?\s*([+-]?\d+(\.\d+)?)", match.group(0))
+                
+                if dimension_value_match:
+                    adjustment_value = float(dimension_value_match.group(1))
+                    old_value = relation[dimension]
+                    relation[dimension] = max(0, min(100, old_value + adjustment_value))
+                    relation["history"].append({
+                        "timestamp": datetime.now().isoformat(),
+                        "adjustment": adjustment_value,
+                        "reason": f"管理员调整 {dimension}"
+                    })
+            
             await self.save_data()
             
-            ctx.event.reply = [f"用户 {target_user} 的 {dimension} 已从 {old_value:.1f} 调整为 {relation[dimension]:.1f}。"]
+            ctx.event.reply = [f"用户 {target_user} 的维度已更新。"]
             ctx.prevent_default()
         except Exception as e:
             ctx.event.reply = [f"调整维度失败: {str(e)}"]
@@ -257,60 +292,56 @@ class RelationManager(BasePlugin):
         if not hasattr(event, 'response_text') or not event.response_text:
             return
 
-        # 提取评价值调整
+        # 提取所有括号内的调整指令
         matches = self.pattern.findall(event.response_text)
-        total_adjustment = 0
-        cleaned_response = event.response_text
+        if not matches:
+            return
 
-        for match in matches:
-            if match[0] or match[1]:  # 评价值调整
-                value = match[0] or match[1]
-                try:
-                    adjustment = int(value)
-                    total_adjustment += adjustment
-                    cleaned_response = cleaned_response.replace(match[0] or match[1], "", 1)
-                except ValueError:
-                    self.ap.logger.warning(f"无效的评价值数值: {value}")
-                    
-            else:  # 各个维度的调整
-                dimension = match[3]
-                value = match[4]
-                
-                if dimension and value:
-                    try:
-                        adjustment = int(value)
-                        total_adjustment += adjustment
-                        # 更新相应维度的值
-                        relation = self.get_relation(user_id)
-                        old_dimension_value = relation[dimension]
-                        relation[dimension] = max(0, min(100, old_dimension_value + adjustment))
-                        relation["history"].append({
-                            "timestamp": datetime.now().isoformat(),
-                            "adjustment": adjustment,
-                            "reason": f"AI自动调整 {dimension}"
-                        })
-                    except ValueError:
-                        self.ap.logger.warning(f"无效的 {dimension} 数值: {value}")
-
-        # 更新综合评价值
-        if total_adjustment != 0:
-            relation = self.get_relation(user_id)
-            new_evaluation = max(0, min(100, relation["evaluation"] + total_adjustment))
-            actual_adjustment = new_evaluation - relation["evaluation"]
-            relation["evaluation"] = new_evaluation
-            relation["history"].append({
-                "timestamp": datetime.now().isoformat(),
-                "adjustment": actual_adjustment,
-                "reason": "AI自动调整综合评分"
-            })
-            relation["last_interaction"] = datetime.now().isoformat()
-            await self.save_data()
+        # 清理原始回复内容
+        cleaned_response = re.sub(self.pattern, "", event.response_text).strip()
+        
+        # 处理每个匹配到的调整块
+        relation = self.get_relation(user_id)
+        for adjustment_block in matches:
+            adjustments = self.parse_dimension_adjustments(adjustment_block)
             
-            # 更新回复内容
-            ctx.event.response_text = (
-                f"{cleaned_response.strip()}\n"
-                f"[系统提示] 评价值已更新，当前为 {new_evaluation}/100。"
-            )
+            for dimension, value in adjustments.items():
+                # 获取维度字段名映射
+                dimension_map = {
+                    "信任度": "trust",
+                    "好感度": "favor",
+                    "互惠性": "reciprocity",
+                    "亲密度": "intimacy",
+                    "情绪支持": "emotional_support"
+                }
+                
+                field_name = dimension_map.get(dimension)
+                if not field_name:
+                    continue
+                    
+                # 应用调整值
+                old_value = relation[field_name]
+                new_value = max(0.0, min(100.0, old_value + value))
+                relation[field_name] = new_value
+                
+                # 记录历史
+                relation["history"].append({
+                    "timestamp": datetime.now().isoformat(),
+                    "adjustment": value,
+                    "reason": f"AI自动调整 {dimension}",
+                    "dimension": field_name
+                })
+                
+                self.ap.logger.debug(
+                    f"用户 {user_id} {dimension} 调整: {old_value:.1f} → {new_value:.1f}"
+                )
+
+        # 更新综合评分
+        relation["evaluation"] = self.calculate_evaluation(relation)
+        
+        # 保存数据并更新回复
+        await self.save_data()
+        ctx.event.response_text = f"{cleaned_response}\n[多维评分已自动更新]"
 
     def __del__(self):
         pass
