@@ -1,4 +1,3 @@
-# plugins/GroupMemoryMini/__init__.py
 import json
 import re
 from pathlib import Path
@@ -11,8 +10,8 @@ from pkg.plugin.events import (
 )
 
 @register(
-    name="GroupMemoryMini",
-    description="基于多维情感模型的轻量伪记忆系统",
+    name="GroupMemoryPro",
+    description="基于多维情感模型的伪记忆系统",
     version="0.2",  # 更新版本号
     author="KL"
 )
@@ -21,7 +20,11 @@ class RelationManager(BasePlugin):
         super().__init__(host)
         self.data_path = Path("plugins/GroupMemoryMini/data/relation_data.json")
         self.relation_data = {}
-        self.pattern = re.compile(r"评价值([+-]?\d+)|评价值\s*[：:]\s*([+-]?\d+)")
+        # 更新正则表达式以匹配各个维度的评分调整
+        self.pattern = re.compile(
+            r"(评价值\s*([+-]?\d+)|评价值\s*[：:]\s*([+-]?\d+)|评分\s*([+-]?\d+)|)"
+            r"(信任度|好感度|互惠性|亲密度|情绪支持)[：:]\s*([+-]?\d+)"
+        )
         
         # 默认管理员列表
         self.admin_users = ["123456789"]  # 替换为实际的管理员用户ID
@@ -71,9 +74,9 @@ class RelationManager(BasePlugin):
         return self.relation_data.setdefault(user_id, {
             "evaluation": 50,  # 综合评分
             "trust": 50,       # 信任度
-            "favor": 50,        # 好感度
-            "reciprocity": 0,   # 互惠性
-            "intimacy": 50,     # 亲密度
+            "favor": 50,       # 好感度
+            "reciprocity": 0,  # 互惠性
+            "intimacy": 50,    # 亲密度
             "emotional_support": 50,  # 情绪支持
             "history": [],
             "last_interaction": datetime.now().isoformat(),
@@ -159,7 +162,7 @@ class RelationManager(BasePlugin):
             target_user = parts[1]
             new_evaluation = int(parts[3])
             
-            if not target_user or not new_evaluation:
+            if not target_user or new_evaluation is None:
                 raise ValueError("参数错误")
             
             relation = self.get_relation(target_user)
@@ -189,8 +192,6 @@ class RelationManager(BasePlugin):
                 raise ValueError("参数错误")
             
             relation = self.get_relation(target_user)
-            if "custom_note" not in relation:
-                relation["custom_note"] = ""
             relation["custom_note"] = tag
             await self.save_data()
             
@@ -210,8 +211,7 @@ class RelationManager(BasePlugin):
                 raise ValueError("参数错误")
             
             relation = self.get_relation(target_user)
-            if "custom_note" in relation:
-                relation["custom_note"] = ""
+            relation["custom_note"] = ""
             await self.save_data()
             
             ctx.event.reply = [f"已移除用户 {target_user} 的标签。"]
@@ -262,15 +262,36 @@ class RelationManager(BasePlugin):
         cleaned_response = event.response_text
 
         for match in matches:
-            value = match[0] or match[1]
-            try:
-                adjustment = int(value)
-                total_adjustment += adjustment
-                cleaned_response = cleaned_response.replace(match[0] or match[1], "", 1)
-            except ValueError:
-                self.ap.logger.warning(f"无效的评价值数值: {value}")
+            if match[0] or match[1]:  # 评价值调整
+                value = match[0] or match[1]
+                try:
+                    adjustment = int(value)
+                    total_adjustment += adjustment
+                    cleaned_response = cleaned_response.replace(match[0] or match[1], "", 1)
+                except ValueError:
+                    self.ap.logger.warning(f"无效的评价值数值: {value}")
+                    
+            else:  # 各个维度的调整
+                dimension = match[3]
+                value = match[4]
+                
+                if dimension and value:
+                    try:
+                        adjustment = int(value)
+                        total_adjustment += adjustment
+                        # 更新相应维度的值
+                        relation = self.get_relation(user_id)
+                        old_dimension_value = relation[dimension]
+                        relation[dimension] = max(0, min(100, old_dimension_value + adjustment))
+                        relation["history"].append({
+                            "timestamp": datetime.now().isoformat(),
+                            "adjustment": adjustment,
+                            "reason": f"AI自动调整 {dimension}"
+                        })
+                    except ValueError:
+                        self.ap.logger.warning(f"无效的 {dimension} 数值: {value}")
 
-        # 更新评价值
+        # 更新综合评价值
         if total_adjustment != 0:
             relation = self.get_relation(user_id)
             new_evaluation = max(0, min(100, relation["evaluation"] + total_adjustment))
@@ -279,12 +300,11 @@ class RelationManager(BasePlugin):
             relation["history"].append({
                 "timestamp": datetime.now().isoformat(),
                 "adjustment": actual_adjustment,
-                "reason": "AI自动调整"
+                "reason": "AI自动调整综合评分"
             })
             relation["last_interaction"] = datetime.now().isoformat()
             await self.save_data()
-            self.ap.logger.info(f"用户 {user_id} 评价值变化: {actual_adjustment}, 当前: {new_evaluation}")
-
+            
             # 更新回复内容
             ctx.event.response_text = (
                 f"{cleaned_response.strip()}\n"
