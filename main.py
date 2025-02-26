@@ -1,3 +1,4 @@
+# GroupMemoryPro
 import json
 import re
 from pathlib import Path
@@ -67,6 +68,7 @@ class RelationManager(BasePlugin):
             with open(temp_path, 'w', encoding='utf-8') as f:
                 json.dump(self.relation_data, f, ensure_ascii=False, indent=2)
             temp_path.replace(self.data_path)
+            self.ap.logger.debug("用户关系数据保存成功")
         except Exception as e:
             self.ap.logger.error(f"保存数据失败: {str(e)}")
 
@@ -201,11 +203,17 @@ class RelationManager(BasePlugin):
                 "adjustment": new_evaluation - old_evaluation,
                 "reason": "管理员手动调整"
             })
-            await self.save_data()
             
+            # 记录管理员调整日志
+            self.ap.logger.debug(
+                f"管理员调整用户 {target_user} 综合评分: {old_evaluation:.1f} → {new_evaluation}"
+            )
+            
+            await self.save_data()
             ctx.event.reply = [f"用户 {target_user} 的综合评分已从 {old_evaluation:.1f} 修改为 {new_evaluation}。"]
             ctx.prevent_default()
         except Exception as e:
+            self.ap.logger.error(f"修改评价分失败: {str(e)}")
             ctx.event.reply = [f"修改评价分失败: {str(e)}"]
             ctx.prevent_default()
 
@@ -223,9 +231,15 @@ class RelationManager(BasePlugin):
             relation["custom_note"] = tag
             await self.save_data()
             
+            # 记录增加标签日志
+            self.ap.logger.debug(
+                f"管理员为用户 {target_user} 添加标签: {tag}"
+            )
+            
             ctx.event.reply = [f"已为用户 {target_user} 添加标签: {tag}。"]
             ctx.prevent_default()
         except Exception as e:
+            self.ap.logger.error(f"增加标签失败: {str(e)}")
             ctx.event.reply = [f"增加标签失败: {str(e)}"]
             ctx.prevent_default()
 
@@ -242,9 +256,15 @@ class RelationManager(BasePlugin):
             relation["custom_note"] = ""
             await self.save_data()
             
+            # 记录删除标签日志
+            self.ap.logger.debug(
+                f"管理员移除用户 {target_user} 的标签"
+            )
+            
             ctx.event.reply = [f"已移除用户 {target_user} 的标签。"]
             ctx.prevent_default()
         except Exception as e:
+            self.ap.logger.error(f"删除标签失败: {str(e)}")
             ctx.event.reply = [f"删除标签失败: {str(e)}"]
             ctx.prevent_default()
 
@@ -274,12 +294,17 @@ class RelationManager(BasePlugin):
                         "adjustment": adjustment_value,
                         "reason": f"管理员调整 {dimension}"
                     })
+                    
+                    # 记录维度调整日志
+                    self.ap.logger.info(
+                        f"管理员调整用户 {target_user} {dimension}: {old_value:.1f} → {relation[dimension]:.1f}"
+                    )
             
             await self.save_data()
-            
             ctx.event.reply = [f"用户 {target_user} 的维度已更新。"]
             ctx.prevent_default()
         except Exception as e:
+            self.ap.logger.error(f"调整维度失败: {str(e)}")
             ctx.event.reply = [f"调整维度失败: {str(e)}"]
             ctx.prevent_default()
 
@@ -324,6 +349,11 @@ class RelationManager(BasePlugin):
                 new_value = max(0.0, min(100.0, old_value + value))
                 relation[field_name] = new_value
                 
+                # 记录维度调整日志
+                self.ap.logger.info(
+                    f"用户 {user_id} {dimension} 调整: {old_value:.1f} → {new_value:.1f}"
+                )
+                
                 # 记录历史
                 relation["history"].append({
                     "timestamp": datetime.now().isoformat(),
@@ -331,13 +361,13 @@ class RelationManager(BasePlugin):
                     "reason": f"AI自动调整 {dimension}",
                     "dimension": field_name
                 })
-                
-                self.ap.logger.debug(
-                    f"用户 {user_id} {dimension} 调整: {old_value:.1f} → {new_value:.1f}"
-                )
 
         # 更新综合评分
+        old_evaluation = relation["evaluation"]
         relation["evaluation"] = self.calculate_evaluation(relation)
+        self.ap.logger.info(
+            f"用户 {user_id} 综合评分变化: {old_evaluation:.1f} → {relation['evaluation']:.1f}"
+        )
         
         # 保存数据并更新回复
         await self.save_data()
